@@ -178,8 +178,50 @@ resource "aws_appautoscaling_policy" "ecs_policy_cpu" {
     scale_out_cooldown = 60
   }
 }
+# 6. GitHub Actions OIDC (for CI/CD pipeline to assume a role instead of using static AWS keys)
+resource "aws_iam_openid_connect_provider" "github_actions" {
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+  thumbprint_list = [
+    "6938fd4d98bab03faadb97b34396831e3780aea",
+    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
+  ]
+}
+
+resource "aws_iam_role" "github_actions" {
+  name = "github-actions-ecs-cicd-pipeline"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Federated = aws_iam_openid_connect_provider.github_actions.arn }
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" = "repo:PraiseAddy2022/ecs-cicd-pipeline:ref:refs/heads/main"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "github_actions_ecr" {
+  role       = aws_iam_role.github_actions.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
 # 7. Output
 output "alb_dns_name" {
   description = "The DNS name of the application load balancer"
   value       = aws_lb.main.dns_name
+}
+
+output "github_actions_role_arn" {
+  description = "Role ARN to put in the AWS_ROLE_ARN GitHub Actions secret"
+  value       = aws_iam_role.github_actions.arn
 }
